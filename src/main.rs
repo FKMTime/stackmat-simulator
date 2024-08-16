@@ -30,15 +30,124 @@ fn main() -> ! {
 
     esp_println::logger::init_logger_from_env();
 
-    loop {
-        serial.write_byte(0x42).ok();
-        let read = nb::block!(serial.read_byte());
+    send_timer_packet(
+        &mut serial,
+        &generate_timer_packet(StackmatTimerState::Reset, 0, 0, 0),
+    );
+    delay.delay_millis(2500);
 
-        match read {
-            Ok(read) => log::info!("Read 0x{:02x}", read),
-            Err(err) => log::info!("Error {:?}", err),
+    send_timer_packet(
+        &mut serial,
+        &generate_timer_packet(StackmatTimerState::Running, 0, 0, 0),
+    );
+
+    let start = esp_hal::time::current_time();
+
+    loop {
+        let elapsed = esp_hal::time::current_time() - start;
+        if elapsed.to_secs() > 34 && elapsed.to_millis() > 400 {
+            break;
         }
 
-        delay.delay_millis(250);
+        let time = ms_to_time(elapsed.to_millis());
+        send_timer_packet(
+            &mut serial,
+            &generate_timer_packet(StackmatTimerState::Running, time.0, time.1, time.2),
+        );
+        delay.delay_millis(15);
+    }
+
+    let elapsed = esp_hal::time::current_time() - start;
+    let time = ms_to_time(elapsed.to_millis());
+
+    loop {
+        send_timer_packet(
+            &mut serial,
+            &generate_timer_packet(StackmatTimerState::Stopped, time.0, time.1, time.2),
+        );
+
+        delay.delay_millis(5000);
+    }
+}
+
+fn send_timer_packet<T: esp_hal::prelude::_esp_hal_uart_Instance, M: esp_hal::Mode>(
+    uart: &mut Uart<T, M>,
+    buf: &[u8],
+) {
+    let mut offset = 0;
+
+    loop {
+        let res = Uart::write_bytes(uart, &buf[offset..]);
+        match res {
+            Ok(n) => {
+                if offset + n >= buf.len() {
+                    break;
+                }
+
+                offset = n;
+            }
+            Err(e) => {
+                log::error!("Uart::write_bytes error: {e:?}");
+                break;
+            }
+        }
+    }
+}
+
+fn generate_timer_packet(state: StackmatTimerState, minutes: u8, seconds: u8, ms: u16) -> [u8; 8] {
+    let mut tmp = ['0' as u8; 8]; // fill with ascii '0'
+    tmp[0] = state.to_u8();
+    insert_digits(minutes as u64, &mut tmp[1..2]);
+    insert_digits(seconds as u64, &mut tmp[2..4]);
+    insert_digits(ms as u64, &mut tmp[4..7]);
+
+    // sum of all digits + 64
+    let sum = 64 + tmp[1..7].iter().map(|&x| x - '0' as u8).sum::<u8>();
+    tmp[7] = sum;
+    tmp
+}
+
+// insert digits into buffer as ascii bytes
+fn insert_digits(mut nmb: u64, buf: &mut [u8]) {
+    if buf.len() == 0 {
+        return;
+    }
+    let mut offset = buf.len() - 1;
+
+    loop {
+        let dig = nmb % 10;
+        buf[offset] = '0' as u8 + dig as u8;
+        nmb /= 10;
+
+        if offset == 0 {
+            break;
+        }
+        offset -= 1;
+    }
+}
+
+fn ms_to_time(ms: u64) -> (u8, u8, u16) {
+    (
+        (ms / 60000) as u8,
+        ((ms % 60000) / 1000) as u8,
+        (ms % 1000) as u16,
+    )
+}
+
+enum StackmatTimerState {
+    Unknown,
+    Reset,
+    Running,
+    Stopped,
+}
+
+impl StackmatTimerState {
+    fn to_u8(&self) -> u8 {
+        match self {
+            Self::Unknown => 0,
+            Self::Reset => b'I',
+            Self::Running => b' ',
+            Self::Stopped => b'S',
+        }
     }
 }
