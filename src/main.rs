@@ -6,6 +6,7 @@ use esp_hal::{
     clock::ClockControl, delay::Delay, gpio::Io, peripherals::Peripherals, prelude::*,
     system::SystemControl, uart::Uart,
 };
+use rand::Rng;
 
 #[entry]
 fn main() -> ! {
@@ -15,6 +16,7 @@ fn main() -> ! {
 
     let delay = Delay::new(&clocks);
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
+    let mut rng = esp_hal::rng::Rng::new(peripherals.RNG);
 
     let config = esp_hal::uart::config::Config::default().baudrate(1200);
 
@@ -41,11 +43,11 @@ fn main() -> ! {
         &generate_timer_packet(StackmatTimerState::Running, 0, 0, 0),
     );
 
+    let generated_time = rng.gen_range(7000..36000); //7s-36s
     let start = esp_hal::time::current_time();
-
     loop {
         let elapsed = esp_hal::time::current_time() - start;
-        if elapsed.to_secs() > 34 && elapsed.to_millis() > 400 {
+        if elapsed.to_millis() >= generated_time {
             break;
         }
 
@@ -134,6 +136,7 @@ fn ms_to_time(ms: u64) -> (u8, u8, u16) {
     )
 }
 
+#[allow(dead_code)]
 enum StackmatTimerState {
     Unknown,
     Reset,
