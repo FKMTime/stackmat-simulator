@@ -6,7 +6,6 @@ use esp_hal::{
     clock::ClockControl, delay::Delay, gpio::Io, peripherals::Peripherals, prelude::*,
     system::SystemControl, uart::Uart,
 };
-use rand::Rng;
 
 #[entry]
 fn main() -> ! {
@@ -16,13 +15,11 @@ fn main() -> ! {
 
     let delay = Delay::new(&clocks);
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
-    let mut rng = esp_hal::rng::Rng::new(peripherals.RNG);
 
-    let config = esp_hal::uart::config::Config::default().baudrate(1200);
-
+    let serial_config = esp_hal::uart::config::Config::default().baudrate(1200);
     let mut serial = Uart::new_with_config(
         peripherals.UART1,
-        config,
+        serial_config,
         &clocks,
         None,
         io.pins.gpio4,
@@ -43,32 +40,15 @@ fn main() -> ! {
         &generate_timer_packet(StackmatTimerState::Running, 0, 0, 0),
     );
 
-    let generated_time = rng.gen_range(7000..36000); //7s-36s
     let start = esp_hal::time::current_time();
     loop {
         let elapsed = esp_hal::time::current_time() - start;
-        if elapsed.to_millis() >= generated_time {
-            break;
-        }
-
         let time = ms_to_time(elapsed.to_millis());
         send_timer_packet(
             &mut serial,
             &generate_timer_packet(StackmatTimerState::Running, time.0, time.1, time.2),
         );
-        delay.delay_millis(15);
-    }
-
-    let elapsed = esp_hal::time::current_time() - start;
-    let time = ms_to_time(elapsed.to_millis());
-
-    loop {
-        send_timer_packet(
-            &mut serial,
-            &generate_timer_packet(StackmatTimerState::Stopped, time.0, time.1, time.2),
-        );
-
-        delay.delay_millis(5000);
+        delay.delay_millis(60);
     }
 }
 
@@ -96,8 +76,8 @@ fn send_timer_packet<T: esp_hal::prelude::_esp_hal_uart_Instance, M: esp_hal::Mo
     }
 }
 
-fn generate_timer_packet(state: StackmatTimerState, minutes: u8, seconds: u8, ms: u16) -> [u8; 8] {
-    let mut tmp = ['0' as u8; 8]; // fill with ascii '0'
+fn generate_timer_packet(state: StackmatTimerState, minutes: u8, seconds: u8, ms: u16) -> [u8; 9] {
+    let mut tmp = ['0' as u8; 9]; // fill with ascii '0'
     tmp[0] = state.to_u8();
     insert_digits(minutes as u64, &mut tmp[1..2]);
     insert_digits(seconds as u64, &mut tmp[2..4]);
@@ -106,6 +86,7 @@ fn generate_timer_packet(state: StackmatTimerState, minutes: u8, seconds: u8, ms
     // sum of all digits + 64
     let sum = 64 + tmp[1..7].iter().map(|&x| x - '0' as u8).sum::<u8>();
     tmp[7] = sum;
+    tmp[8] = b'\r';
     tmp
 }
 
