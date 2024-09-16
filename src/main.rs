@@ -21,8 +21,7 @@ fn main() -> ! {
         peripherals.UART1,
         serial_config,
         &clocks,
-        None,
-        io.pins.gpio4,
+        io.pins.gpio4, // tx
         io.pins.gpio5,
     )
     .unwrap();
