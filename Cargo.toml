@@ -7,13 +7,14 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 esp-backtrace = { version = "0.14.1", features = [
-    "esp32s3",
+    "esp32c3",
     "exception-handler",
     "panic-handler",
     "println",
 ] }
-esp-hal = { version = "0.20.1", features = [ "esp32s3" ] }
-esp-println = { version = "0.11.0", features = ["esp32s3", "log"] }
+esp-hal = { version = "0.20.1", features = [ "esp32c3" ] }
+esp-println = { version = "0.11.0", features = ["esp32c3", "log"] }
+heapless = "0.8.0"
 log = { version = "0.4.22" }
 rand = { version = "0.8.5", default-features = false }
 [profile.dev]
