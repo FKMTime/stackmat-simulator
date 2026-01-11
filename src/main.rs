@@ -1,64 +1,67 @@
 #![no_std]
 #![no_main]
+#![deny(
+    clippy::mem_forget,
+    reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
+    holding buffers for the duration of a data transfer."
+)]
 
 use esp_backtrace as _;
-use esp_hal::{
-    clock::ClockControl, delay::Delay, gpio::Io, peripherals::Peripherals, prelude::*,
-    system::SystemControl, uart::Uart,
-};
+use esp_hal::clock::CpuClock;
+use esp_hal::delay::Delay;
+use esp_hal::time::{Duration, Instant};
+use esp_hal::uart::UartTx;
+use esp_hal::{DriverMode, main};
+use log::info;
 
-#[entry]
+// This creates a default app-descriptor required by the esp-idf bootloader.
+// For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
+esp_bootloader_esp_idf::esp_app_desc!();
+
+#[main]
 fn main() -> ! {
-    let peripherals = Peripherals::take();
-    let system = SystemControl::new(peripherals.SYSTEM);
-    let clocks = ClockControl::max(system.clock_control).freeze();
-
-    let delay = Delay::new(&clocks);
-    let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
-
-    let serial_config = esp_hal::uart::config::Config::default().baudrate(1200);
-    let mut serial = Uart::new_with_config(
-        peripherals.UART1,
-        serial_config,
-        &clocks,
-        io.pins.gpio4, // tx
-        io.pins.gpio5,
-    )
-    .unwrap();
-
     esp_println::logger::init_logger_from_env();
 
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+    let peripherals = esp_hal::init(config);
+
+    let serial_config = esp_hal::uart::Config::default().with_baudrate(1200);
+    let Ok(mut uart) =
+        UartTx::new(peripherals.UART1, serial_config).map(|u| u.with_tx(peripherals.GPIO20))
+    else {
+        log::error!("Stackmat task error while creating UartRx instance!");
+        loop {}
+    };
+
+    let delay = Delay::new();
+
     send_timer_packet(
-        &mut serial,
+        &mut uart,
         &generate_timer_packet(StackmatTimerState::Reset, 0, 0, 0),
     );
     delay.delay_millis(2500);
 
     send_timer_packet(
-        &mut serial,
+        &mut uart,
         &generate_timer_packet(StackmatTimerState::Running, 0, 0, 0),
     );
 
-    let start = esp_hal::time::current_time();
+    let start = Instant::now();
     loop {
-        let elapsed = esp_hal::time::current_time() - start;
-        let time = ms_to_time(elapsed.to_millis());
+        let time = ms_to_time(start.elapsed().as_millis());
         send_timer_packet(
-            &mut serial,
+            &mut uart,
             &generate_timer_packet(StackmatTimerState::Running, time.0, time.1, time.2),
         );
         delay.delay_millis(60);
     }
 }
 
-fn send_timer_packet<T: esp_hal::prelude::_esp_hal_uart_Instance, M: esp_hal::Mode>(
-    uart: &mut Uart<T, M>,
-    buf: &[u8],
-) {
+fn send_timer_packet<DM: DriverMode>(uart: &mut UartTx<'_, DM>, buf: &[u8]) {
     let mut offset = 0;
 
     loop {
-        let res = Uart::write_bytes(uart, &buf[offset..]);
+        let res = UartTx::write(uart, &buf[offset..]);
         match res {
             Ok(n) => {
                 if offset + n >= buf.len() {
@@ -75,8 +78,8 @@ fn send_timer_packet<T: esp_hal::prelude::_esp_hal_uart_Instance, M: esp_hal::Mo
     }
 }
 
-fn generate_timer_packet(state: StackmatTimerState, minutes: u8, seconds: u8, ms: u16) -> [u8; 9] {
-    let mut tmp = ['0' as u8; 9]; // fill with ascii '0'
+fn generate_timer_packet(state: StackmatTimerState, minutes: u8, seconds: u8, ms: u16) -> [u8; 8] {
+    let mut tmp = ['0' as u8; 8]; // fill with ascii '0'
     tmp[0] = state.to_u8();
     insert_digits(minutes as u64, &mut tmp[1..2]);
     insert_digits(seconds as u64, &mut tmp[2..4]);
@@ -85,7 +88,6 @@ fn generate_timer_packet(state: StackmatTimerState, minutes: u8, seconds: u8, ms
     // sum of all digits + 64
     let sum = 64 + tmp[1..7].iter().map(|&x| x - '0' as u8).sum::<u8>();
     tmp[7] = sum;
-    tmp[8] = b'\r';
     tmp
 }
 
